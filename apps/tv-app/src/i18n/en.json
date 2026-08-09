@@ -15,5 +15,12 @@
   "exit.yes": "Exit",
   "exit.no": "Cancel",
   "booking.greeting": "Hello, {name}!",
-  "booking.room": "Room {room}"
+  "booking.room": "Room {room}",
+  "lock.hint": "Press OK to start",
+  "lock.enter": "Enter",
+  "offline.title": "No connection",
+  "offline.body": "We keep checking the network. Your actions are saved and will be sent as soon as it's back.",
+  "offline.retry": "Try again",
+  "offline.checking": "Checking…",
+  "offline.banner": "Offline — working locally"
 }

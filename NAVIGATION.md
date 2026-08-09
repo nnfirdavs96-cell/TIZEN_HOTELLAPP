@@ -16,7 +16,7 @@
 | `NAVIGATION.md` | Этот файл — карта кода и документации | ✅ есть |
 | `Hotel_Guest_App_Plan.docx` | Исходный презентационный план (до доработки в `docs/`), историческая версия | ✅ есть |
 | `docs/` | Проектная документация (архитектура, API, роадмап и т.д.) — см. раздел 2 | ✅ есть |
-| `apps/tv-app/` | Клиент на Samsung Tizen TV (Vite + TS, D-pad навигация) | ◐ каркас есть (Спринт 1.1 частично) |
+| `apps/tv-app/` | Клиент на Samsung Tizen TV (Vite + TS, D-pad навигация) | ◐ Спринт 1.1 закрыт (без бэкенда) |
 | `apps/staff-panel/` | Панель персонала (React SPA) | ⏳ план (Фаза 2–3) |
 | `apps/api/` | Backend: REST + WebSocket (NestJS) | ⏳ план (Фаза 0–2) |
 | `packages/shared-types/` | Общие TS-типы/контракты API между всеми приложениями | ⏳ план (Фаза 0) |
@@ -82,13 +82,15 @@
 - Контейнер `#app` — куда роутер рендерит экраны.
 
 #### apps/tv-app/src/main.ts
-- Загрузчик приложения (`boot()` L11):
-  - `L18`: `registerTizenKeys()` — цветные и медиа-клавиши.
-  - `L20-28`: `exitApp()` — выход через `tizen.application`.
-  - `L30-38`: создание `Router` + регистрация 7 экранов (home + 6 модулей-заглушек).
-  - `L40-67`: глобальный `keydown` — Back(10009)/Exit, OK как click(), стрелки → `findNearestFocusable`.
-  - `L70`: старт с экрана `home`.
-- `openExitModal()` L88-113 — модалка выхода на Back из home.
+- Загрузчик приложения (`boot()`):
+  - Инициализация `ApiClient` + `MutationQueue` + `NetworkMonitor` (env: `VITE_API_BASE`, `VITE_HEALTH_URL`).
+  - Регистрация 9 экранов: `lock`, `home`, 6 модулей-заглушек, `offline`.
+  - Подписка `net.subscribe`: пробрасывает online-статус в очередь мутаций + баннер `.offline-banner`.
+  - Глобальный `keydown` — Back(10009)/Exit → back(); OK → click активного элемента; стрелки → `findNearestFocusable`.
+  - Старт с экрана `lock` (`router.navigate('lock')`).
+  - Debug-хук `window.__hga` для ручной отладки в консоли dev-сервера.
+- `openExitModal()` — модалка на Back из корневого экрана.
+- `updateOfflineBanner()` — фиксированный красный баннер сверху при отсутствии связи.
 
 #### apps/tv-app/src/core/keys.ts
 - `KEY` — коды клавиш пульта (Left/Right/Up/Down/OK/Back=10009/Exit/цветные), `docs/06-tizen.md:39`.
@@ -124,6 +126,35 @@
 #### apps/tv-app/src/screens/stub.ts
 - Универсальный экран «В разработке» — используется для 6 модулей до реализации.
 
+#### apps/tv-app/src/screens/lock.ts
+- Lock/Welcome-экран (`docs/07-roadmap.md:59`). Приветствие + кнопка «Войти» → `router.replace('home')`.
+- В Спринте 1.2 будет заменён/расширен экранной клавиатурой для ввода PIN/кода брони.
+
+#### apps/tv-app/src/screens/offline.ts
+- Полноэкранный «нет сети» (`docs/06-tizen.md:131`, ADR-006).
+- Кнопка «Проверить ещё раз» вызывает `deps.retry()` (health-probe).
+- При восстановлении сети (`onOnline` → true) экран сам делает `goBack()`.
+
+#### apps/tv-app/src/core/api-client.ts
+- `ApiClient` — REST-клиент (`docs/05-api.md`).
+- `get()`: If-None-Match/304 + кэш в `localStorage` (`hga.cache.<key>`); при 304 отдаёт закэшированный `data` (`fromCache: true`).
+- `post()`: пробрасывает `Idempotency-Key` (ADR-006).
+- Единый `ApiError { kind: 'network'|'timeout'|'http'|'parse', status }` + AbortController-таймаут (8с).
+- `readCachedOnly()` — оффлайн-чтение (для будущих экранов, чтобы не блокировать UI спиннером).
+
+#### apps/tv-app/src/core/mutation-queue.ts
+- Персистентная очередь мутаций в `localStorage` (`hga.mutations.queue`).
+- `enqueue(path, body)` → генерит `id` + `idempotencyKey`, вызывает `POST` через `ApiClient`.
+- Экспоненциальный backoff (1с → 30с), максимум 8 попыток; 4xx = non-retriable (fail сразу).
+- `setOnline(true)` — триггерит обработку; `subscribe(cb)` — для UI-индикаторов.
+
+#### apps/tv-app/src/core/network.ts
+- `NetworkMonitor`: подписка на `online`/`offline` события окна + опциональный health-probe (`healthUrl` каждые 15с).
+- `subscribe(cb)` сразу отдаёт текущее состояние. `probe()` вручную вызывается кнопкой из экрана offline.
+
+#### apps/tv-app/src/i18n/{ru,en}.json
+- Добавлены ключи: `lock.*`, `offline.*`.
+
 #### apps/tv-app/src/styles/main.css
 - Дизайн-токены (CSS-переменные) — темная тема, safe-area 5% (overscan, `docs/06-tizen.md:118`).
 - Базовый шрифт 24px, крупные плитки, фокус-рамка `outline` через `box-shadow` + масштаб (`docs/06-tizen.md:113`).
@@ -139,6 +170,16 @@
 
 > Одна запись на PR/мерж в `main` или `develop`. Самые новые — сверху.
 > Что писать: дата, что изменилось, где (пути), что обновить в разделах 1–3 выше.
+
+### 2026-08-09 — закрытие Спринта 1.1: сеть, offline, Lock
+- Сетевой слой: `core/api-client.ts` (ETag+304 кэш, Idempotency-Key, таймаут, единый `ApiError`), `core/mutation-queue.ts` (persist в localStorage, backoff 1с→30с, до 8 попыток, 4xx = non-retriable), `core/network.ts` (`NetworkMonitor` — onLine + опц. health-probe).
+- Новые экраны: `screens/lock.ts` (Welcome-экран, вход на home), `screens/offline.ts` (полноэкранный «нет сети» с автовыходом при восстановлении).
+- Фиксированный баннер `.offline-banner` в `main.ts` — показывается при потере связи, i18n RU/EN.
+- `main.ts` теперь стартует с экрана `lock`, интегрирует `ApiClient`+`MutationQueue`+`NetworkMonitor`, читает env `VITE_API_BASE`/`VITE_HEALTH_URL`.
+- i18n словари дополнены `lock.*`, `offline.*` (RU/EN).
+- Сборка: JS 18.22 KB / gzip 6.88 KB (бюджет 250 KB, 6% использовано).
+- Спринт 1.1 закрыт полностью (без бэкенда — очередь работает, но реальный POST появится в Спринте 1.2).
+- Ветка: `claude/repo-exploration-d5088t`.
 
 ### 2026-08-09 — каркас `apps/tv-app` (Спринт 1.1, часть)
 - Инициализирован pnpm-workspace: `pnpm-workspace.yaml`, корневой `package.json`, `.gitignore`.

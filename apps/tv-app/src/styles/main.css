@@ -224,3 +224,70 @@ button {
   border-radius: var(--radius-md);
   font-weight: 600;
 }
+
+.lock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 40px;
+  height: 100%;
+  text-align: center;
+}
+
+.lock__brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.lock__logo {
+  font-size: 96px;
+}
+
+.lock__hotel {
+  color: var(--fg-muted);
+  font-size: 24px;
+}
+
+.lock__title {
+  font-size: 64px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.lock__subtitle {
+  color: var(--fg-muted);
+  font-size: 28px;
+  margin-top: 12px;
+}
+
+.lock__actions {
+  display: flex;
+  gap: 20px;
+}
+
+.lock__enter {
+  min-width: 320px;
+}
+
+.lock__foot {
+  color: var(--fg-muted);
+  font-size: 20px;
+}
+
+.offline-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: var(--danger);
+  color: white;
+  text-align: center;
+  padding: 12px 20px;
+  font-size: 22px;
+  font-weight: 600;
+  z-index: 20;
+  letter-spacing: 0.02em;
+}

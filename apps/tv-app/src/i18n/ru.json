@@ -15,5 +15,12 @@
   "exit.yes": "Выйти",
   "exit.no": "Отмена",
   "booking.greeting": "Добрый день, {name}!",
-  "booking.room": "Номер {room}"
+  "booking.room": "Номер {room}",
+  "lock.hint": "Нажмите OK, чтобы начать",
+  "lock.enter": "Войти",
+  "offline.title": "Нет связи",
+  "offline.body": "Проверяем подключение автоматически. Действия сохраняются и отправятся, как только сеть вернётся.",
+  "offline.retry": "Проверить ещё раз",
+  "offline.checking": "Проверяем…",
+  "offline.banner": "Нет сети — работаем офлайн"
 }

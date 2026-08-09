@@ -2,10 +2,21 @@ import { Router } from "./core/router";
 import { KEY, keyToDirection, registerTizenKeys } from "./core/keys";
 import { findNearestFocusable } from "./core/focus-engine";
 import { t, getLang, onLangChange } from "./core/i18n";
+import { ApiClient } from "./core/api-client";
+import { MutationQueue } from "./core/mutation-queue";
+import { NetworkMonitor } from "./core/network";
+import { renderLock } from "./screens/lock";
 import { renderHome } from "./screens/home";
 import { renderStub } from "./screens/stub";
+import { renderOffline } from "./screens/offline";
 
 const APP_ROOT_ID = "app";
+
+// API base — реальный backend появится в Спринте 1.2.
+// Health-URL пустой в dev: NetworkMonitor полагается на navigator.onLine,
+// без ложных offline из-за отсутствующего /health.
+const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "";
+const HEALTH_URL = (import.meta.env.VITE_HEALTH_URL as string | undefined) ?? "";
 
 function boot(): void {
   const root = document.getElementById(APP_ROOT_ID);
@@ -14,6 +25,13 @@ function boot(): void {
   onLangChange((lang) => (document.documentElement.lang = lang));
 
   registerTizenKeys();
+
+  const api = new ApiClient({
+    baseUrl: API_BASE || "http://localhost:0",
+    getAuthToken: () => localStorage.getItem("hga.auth.token"),
+  });
+  const queue = new MutationQueue(api);
+  const net = new NetworkMonitor({ healthUrl: HEALTH_URL || undefined });
 
   const exitApp = (): void => {
     const tizen = (window as unknown as { tizen?: { application?: { getCurrentApplication?: () => { exit: () => void } } } }).tizen;
@@ -25,6 +43,7 @@ function boot(): void {
   };
 
   const router = new Router(root, () => openExitModal(exitApp));
+  router.register("lock", (ctx) => renderLock(ctx, () => router.replace("home")));
   router.register("home", (ctx) => renderHome(ctx, (screen) => router.navigate(screen)));
   router.register("checkin", (ctx) => renderStub(ctx, "menu.checkin"));
   router.register("food", (ctx) => renderStub(ctx, "menu.food"));
@@ -32,6 +51,19 @@ function boot(): void {
   router.register("shop", (ctx) => renderStub(ctx, "menu.shop"));
   router.register("chat", (ctx) => renderStub(ctx, "menu.chat"));
   router.register("info", (ctx) => renderStub(ctx, "menu.info"));
+  router.register("offline", (ctx) =>
+    renderOffline(ctx, {
+      isOnline: () => net.online(),
+      onOnline: (cb) => net.subscribe(cb),
+      retry: () => net.probe(),
+    }),
+  );
+
+  net.subscribe((online) => {
+    queue.setOnline(online);
+    updateOfflineBanner(online);
+  });
+  net.start();
 
   document.addEventListener("keydown", (e) => {
     const code = e.keyCode;
@@ -65,7 +97,10 @@ function boot(): void {
     }
   });
 
-  router.navigate("home");
+  router.navigate("lock");
+
+  // Экспорт для отладки (dev-only, безопасно оставить: не влияет на прод-функционал)
+  Object.assign(window as unknown as Record<string, unknown>, { __hga: { api, queue, net, router } });
 }
 
 function isModalOpen(): boolean {
@@ -78,6 +113,25 @@ function getFocusScope(): ParentNode {
 
 function closeModal(): void {
   document.querySelector(".modal-backdrop")?.remove();
+}
+
+function updateOfflineBanner(online: boolean): void {
+  const existing = document.getElementById("offline-banner");
+  if (online) {
+    existing?.remove();
+    return;
+  }
+  if (existing) return;
+  const banner = document.createElement("div");
+  banner.id = "offline-banner";
+  banner.className = "offline-banner";
+  banner.setAttribute("role", "status");
+  banner.textContent = t("offline.banner");
+  document.body.appendChild(banner);
+  onLangChange(() => {
+    const el = document.getElementById("offline-banner");
+    if (el) el.textContent = t("offline.banner");
+  });
 }
 
 function openExitModal(onExit: () => void): void {
