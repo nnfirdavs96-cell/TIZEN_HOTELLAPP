@@ -16,7 +16,7 @@
 | `NAVIGATION.md` | Этот файл — карта кода и документации | ✅ есть |
 | `Hotel_Guest_App_Plan.docx` | Исходный презентационный план (до доработки в `docs/`), историческая версия | ✅ есть |
 | `docs/` | Проектная документация (архитектура, API, роадмап и т.д.) — см. раздел 2 | ✅ есть |
-| `apps/tv-app/` | Клиент на Samsung Tizen TV (Vite + TS, D-pad навигация) | ◐ Спринт 1.1 закрыт (без бэкенда) |
+| `apps/tv-app/` | Клиент на Samsung Tizen TV (Vite + TS, D-pad навигация) | ◐ Спринты 1.1+1.2 (FE) на моках |
 | `apps/staff-panel/` | Панель персонала (React SPA) | ⏳ план (Фаза 2–3) |
 | `apps/api/` | Backend: REST + WebSocket (NestJS) | ⏳ план (Фаза 0–2) |
 | `packages/shared-types/` | Общие TS-типы/контракты API между всеми приложениями | ⏳ план (Фаза 0) |
@@ -83,14 +83,14 @@
 
 #### apps/tv-app/src/main.ts
 - Загрузчик приложения (`boot()`):
-  - Инициализация `ApiClient` + `MutationQueue` + `NetworkMonitor` (env: `VITE_API_BASE`, `VITE_HEALTH_URL`).
-  - Регистрация 9 экранов: `lock`, `home`, 6 модулей-заглушек, `offline`.
-  - Подписка `net.subscribe`: пробрасывает online-статус в очередь мутаций + баннер `.offline-banner`.
-  - Глобальный `keydown` — Back(10009)/Exit → back(); OK → click активного элемента; стрелки → `findNearestFocusable`.
-  - Старт с экрана `lock` (`router.navigate('lock')`).
-  - Debug-хук `window.__hga` для ручной отладки в консоли dev-сервера.
-- `openExitModal()` — модалка на Back из корневого экрана.
-- `updateOfflineBanner()` — фиксированный красный баннер сверху при отсутствии связи.
+  - Инициализация `Session` + `ApiClient` + `AuthService` + `BookingService` + `MutationQueue` + `NetworkMonitor`.
+  - `USE_MOCKS = !VITE_API_BASE` — весь mock-режим переключается одной переменной.
+  - Регистрация экранов: `lock`, `login`, `home`, `booking`, `bill`, `checkout`, `checkout-success`, 5 модулей-заглушек, `offline`.
+  - `session.subscribe`: авто-редирект на `lock` при потере сессии (кроме экранов lock/login/checkout-success).
+  - `enter()` — маршрутизация из lock: если authed → `home`, иначе → `login`.
+  - Подписка `net.subscribe`: пробрасывает online-статус в очередь мутаций + баннер.
+  - Глобальный `keydown` — Back/Exit → back(); OK → click; стрелки → `findNearestFocusable`.
+  - Debug-хук `window.__hga` для ручной отладки.
 
 #### apps/tv-app/src/core/keys.ts
 - `KEY` — коды клавиш пульта (Left/Right/Up/Down/OK/Back=10009/Exit/цветные), `docs/06-tizen.md:39`.
@@ -161,8 +161,54 @@
 - Классы: `.home`, `.tile`, `.stub`, `.modal-backdrop`, `.btn*`, `.lang-toggle`.
 
 #### apps/tv-app/src/data/mocks.ts
-- Моки на время отсутствия backend: `mockBooking` (гость+номер), `mockMenu` (3 блюда).
-- Уйдут при подключении реального API (Фаза 1, `docs/07-roadmap.md:61`).
+- Моки на время отсутствия backend: `mockBooking` (полный: гость+email, номер, даты, тариф, сервисы, total), `mockFolio` (5 позиций фолио: проживание, room service, минибар, такси, магазин), `mockMenu`.
+- `MOCK_VALID_CODES` (`ABC123`, `GUEST01`) и `MOCK_VALID_PINS` (`4821`, `1234`) — для входа в mock-режиме.
+- Типы `Money`, `Booking`, `Folio`, `FolioEntry` — форма ответа `/v1/booking/*` (`docs/05-api.md:63`).
+- Уйдут при подключении реального API (Спринт 1.2 backend-часть).
+
+#### apps/tv-app/src/core/session.ts
+- Хранение сессии: access/refresh/deviceToken/guest в `localStorage` (ключи `hga.auth.*`, `hga.device.*`).
+- `login()/logout()/updateAccess()`, `isAuthed()`, `subscribe()` — реактивные подписчики (используется в `main.ts` для auto-redirect на lock).
+
+#### apps/tv-app/src/core/format.ts
+- `formatMoney(m)` — Intl.NumberFormat с валютой (RUB → ru-RU).
+- `formatDate(iso)`, `formatDateTime(iso)` — локаль из `getLang()`.
+
+#### apps/tv-app/src/services/auth.ts
+- `AuthService.login({ bookingCode | pin })` — POST `/v1/auth/login` (`docs/05-api.md:39`).
+- В mock-режиме (`useMocks=true`, env `VITE_API_BASE` пусто): 400 мс задержки, проверка по `MOCK_VALID_CODES`/`MOCK_VALID_PINS`, при неверном — `AUTH_INVALID`.
+- `AuthService.isAuthError()` — тип-guard для UI.
+
+#### apps/tv-app/src/services/booking.ts
+- `BookingService.getCurrent()` → GET `/v1/booking/current` (кэш `booking.current`, ETag).
+- `getFolio()` → GET `/v1/booking/folio` (кэш `booking.folio`).
+- `checkout(email)` → POST `/v1/booking/checkout`; после успеха инвалидирует сессию (`session.logout()`).
+- Mock-режим отдаёт `mockBooking`/`mockFolio` с задержкой; checkout возвращает `inv-<timestamp>`.
+
+#### apps/tv-app/src/components/keypad.ts
+- Экранная клавиатура под D-pad (`docs/06-tizen.md:65`).
+- Режимы `numeric` (PIN) / `alphanumeric` (код брони). `masked: true` — скрывает символы точками.
+- `maxLength` cells, кнопки backspace/OK, `onChange`/`onSubmit` колбэки, `setError()` для отображения ошибок.
+
+#### apps/tv-app/src/screens/login.ts
+- Экран входа: переключение mode `code`/`pin`, keypad для ввода, лимит `MAX_ATTEMPTS=5`.
+- Локализованные ошибки: неверно/слишком короткое/заблокировано/сеть.
+- На успех вызывает `onSuccess` (в `main.ts` → replace на `home`).
+
+#### apps/tv-app/src/screens/booking-details.ts
+- Детали текущей брони: гость, номер, даты, тариф, сервисы, total. Три кнопки: «Открыть счёт», «Оформить выезд», «Назад».
+- Loading/error-состояния, retry.
+
+#### apps/tv-app/src/screens/bill.ts
+- Список позиций фолио с иконками по source (`stay`/`food`/`shop`/`taxi`/`other`), сумма к оплате.
+- Кнопки «Оформить выезд» и «Назад».
+
+#### apps/tv-app/src/screens/checkout.ts
+- Экран подтверждения выезда: показывает итог, email из брони. На confirm вызывает `booking.checkout()`, на успех → `checkout-success`.
+- Кнопки заблокированы на время submit; ошибка отображается inline.
+
+#### apps/tv-app/src/screens/checkout-success.ts
+- Экран успеха: галка, «счёт отправлен на …», номер invoice, кнопка «Готово» → возвращает на `lock` (сессия уже инвалидирована).
 
 ---
 
@@ -170,6 +216,18 @@
 
 > Одна запись на PR/мерж в `main` или `develop`. Самые новые — сверху.
 > Что писать: дата, что изменилось, где (пути), что обновить в разделах 1–3 выше.
+
+### 2026-08-09 — Спринт 1.2 (FE): экранная клавиатура, login, бронь, счёт, checkout
+- Новые сервисы: `core/session.ts` (токены + guest), `core/format.ts` (Intl money/date), `services/auth.ts` (POST /v1/auth/login), `services/booking.ts` (GET current/folio + POST checkout).
+- Компонент: `components/keypad.ts` — экранная клавиатура numeric/alphanumeric, masked, backspace/OK.
+- Экраны: `screens/login.ts` (mode code/PIN, лимит 5 попыток), `screens/booking-details.ts`, `screens/bill.ts` (folio с иконками по source), `screens/checkout.ts`, `screens/checkout-success.ts`.
+- `main.ts`: full auth flow (lock → login → home → booking → bill → checkout → success), auto-redirect на lock при потере сессии.
+- Моки расширены: полный `Booking`, `Folio` (5 позиций), валидные коды `ABC123`/`GUEST01`, PIN `4821`/`1234`.
+- i18n RU/EN пополнены ключами `login.*`, `booking.*`, `bill.*`, `checkout.*`, `keypad.*`, `common.*`.
+- Стили: 10-foot UI страницы (`.page`, `.card`, `.folio`, `.login`, `.keypad`, `.checkout*`).
+- Сборка: JS 36.75 KB / gzip 12.10 KB (15% бюджета 250 KB).
+- FE-часть Спринта 1.2 закрыта; backend (auth+booking API+email) — следующий заход.
+- Ветка: `claude/repo-exploration-d5088t`.
 
 ### 2026-08-09 — закрытие Спринта 1.1: сеть, offline, Lock
 - Сетевой слой: `core/api-client.ts` (ETag+304 кэш, Idempotency-Key, таймаут, единый `ApiError`), `core/mutation-queue.ts` (persist в localStorage, backoff 1с→30с, до 8 попыток, 4xx = non-retriable), `core/network.ts` (`NetworkMonitor` — onLine + опц. health-probe).

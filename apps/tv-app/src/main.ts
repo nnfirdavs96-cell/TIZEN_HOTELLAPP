@@ -5,18 +5,23 @@ import { t, getLang, onLangChange } from "./core/i18n";
 import { ApiClient } from "./core/api-client";
 import { MutationQueue } from "./core/mutation-queue";
 import { NetworkMonitor } from "./core/network";
+import { Session } from "./core/session";
+import { AuthService } from "./services/auth";
+import { BookingService } from "./services/booking";
 import { renderLock } from "./screens/lock";
+import { renderLogin } from "./screens/login";
 import { renderHome } from "./screens/home";
 import { renderStub } from "./screens/stub";
 import { renderOffline } from "./screens/offline";
+import { renderBookingDetails } from "./screens/booking-details";
+import { renderBill } from "./screens/bill";
+import { renderCheckout } from "./screens/checkout";
+import { renderCheckoutSuccess } from "./screens/checkout-success";
 
 const APP_ROOT_ID = "app";
-
-// API base — реальный backend появится в Спринте 1.2.
-// Health-URL пустой в dev: NetworkMonitor полагается на navigator.onLine,
-// без ложных offline из-за отсутствующего /health.
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "";
 const HEALTH_URL = (import.meta.env.VITE_HEALTH_URL as string | undefined) ?? "";
+const USE_MOCKS = !API_BASE;
 
 function boot(): void {
   const root = document.getElementById(APP_ROOT_ID);
@@ -26,10 +31,13 @@ function boot(): void {
 
   registerTizenKeys();
 
+  const session = new Session();
   const api = new ApiClient({
     baseUrl: API_BASE || "http://localhost:0",
-    getAuthToken: () => localStorage.getItem("hga.auth.token"),
+    getAuthToken: () => session.getAccessToken(),
   });
+  const auth = new AuthService(api, session, USE_MOCKS);
+  const booking = new BookingService(api, session, USE_MOCKS);
   const queue = new MutationQueue(api);
   const net = new NetworkMonitor({ healthUrl: HEALTH_URL || undefined });
 
@@ -43,9 +51,45 @@ function boot(): void {
   };
 
   const router = new Router(root, () => openExitModal(exitApp));
-  router.register("lock", (ctx) => renderLock(ctx, () => router.replace("home")));
-  router.register("home", (ctx) => renderHome(ctx, (screen) => router.navigate(screen)));
-  router.register("checkin", (ctx) => renderStub(ctx, "menu.checkin"));
+
+  router.register("lock", (ctx) => renderLock(ctx, () => enter()));
+  router.register("login", (ctx) =>
+    renderLogin(ctx, { auth, onSuccess: () => router.replace("home") }),
+  );
+  router.register("home", (ctx) =>
+    renderHome(ctx, { session, navigate: (screen) => router.navigate(screen) }),
+  );
+  router.register("booking", (ctx) =>
+    renderBookingDetails(ctx, {
+      booking,
+      onOpenBill: () => router.navigate("bill"),
+      onCheckout: () => router.navigate("checkout"),
+    }),
+  );
+  router.register("bill", (ctx) =>
+    renderBill(ctx, { booking, onCheckout: () => router.navigate("checkout") }),
+  );
+  router.register("checkout", (ctx) =>
+    renderCheckout(ctx, {
+      booking,
+      getBooking: () => booking.getCurrent(),
+      onSuccess: (invoiceId, email) => {
+        (window as unknown as Record<string, unknown>).__lastInvoice = { invoiceId, email };
+        router.replace("checkout-success");
+      },
+    }),
+  );
+  router.register("checkout-success", (ctx) => {
+    const last = (window as unknown as { __lastInvoice?: { invoiceId: string; email: string } }).__lastInvoice ?? {
+      invoiceId: "-",
+      email: "-",
+    };
+    return renderCheckoutSuccess(ctx, {
+      invoiceId: last.invoiceId,
+      email: last.email,
+      onDone: () => router.replace("lock"),
+    });
+  });
   router.register("food", (ctx) => renderStub(ctx, "menu.food"));
   router.register("taxi", (ctx) => renderStub(ctx, "menu.taxi"));
   router.register("shop", (ctx) => renderStub(ctx, "menu.shop"));
@@ -64,6 +108,20 @@ function boot(): void {
     updateOfflineBanner(online);
   });
   net.start();
+
+  session.subscribe((snap) => {
+    if (!snap.authed) {
+      const curr = router.current();
+      if (curr && curr !== "lock" && curr !== "login" && curr !== "checkout-success") {
+        router.replace("lock");
+      }
+    }
+  });
+
+  function enter(): void {
+    if (session.isAuthed()) router.replace("home");
+    else router.replace("login");
+  }
 
   document.addEventListener("keydown", (e) => {
     const code = e.keyCode;
@@ -97,10 +155,11 @@ function boot(): void {
     }
   });
 
-  router.navigate("lock");
+  router.navigate(session.isAuthed() ? "home" : "lock");
 
-  // Экспорт для отладки (dev-only, безопасно оставить: не влияет на прод-функционал)
-  Object.assign(window as unknown as Record<string, unknown>, { __hga: { api, queue, net, router } });
+  Object.assign(window as unknown as Record<string, unknown>, {
+    __hga: { api, queue, net, router, session, auth, booking, useMocks: USE_MOCKS },
+  });
 }
 
 function isModalOpen(): boolean {
