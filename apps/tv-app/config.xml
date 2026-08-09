@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets"
+        xmlns:tizen="http://tizen.org/ns/widgets"
+        id="http://hotellapp/tvapp"
+        version="0.1.0"
+        viewmodes="maximized">
+  <tizen:application id="hotellapp.tvapp"
+                     package="hotellapp"
+                     required_version="4.0" />
+  <name>Hotel Guest App</name>
+  <content src="index.html" />
+  <icon src="icon.png" />
+  <tizen:profile name="tv" />
+  <tizen:setting screen-orientation="landscape"
+                 background-support="disable"
+                 encryption="disable"
+                 install-location="auto" />
+  <tizen:privilege name="http://tizen.org/privilege/internet" />
+  <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice" />
+  <tizen:privilege name="http://tizen.org/privilege/network.get" />
+  <access origin="*" subdomains="true" />
+</widget>
