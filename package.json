@@ -1,0 +1,12 @@
+{
+  "name": "tizen-hotellapp",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Hotel Guest App — Samsung Tizen TV, staff panel, backend API (monorepo)",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "tv:dev": "pnpm --filter tv-app dev",
+    "tv:build": "pnpm --filter tv-app build",
+    "tv:preview": "pnpm --filter tv-app preview"
+  }
+}

@@ -16,7 +16,7 @@
 | `NAVIGATION.md` | Этот файл — карта кода и документации | ✅ есть |
 | `Hotel_Guest_App_Plan.docx` | Исходный презентационный план (до доработки в `docs/`), историческая версия | ✅ есть |
 | `docs/` | Проектная документация (архитектура, API, роадмап и т.д.) — см. раздел 2 | ✅ есть |
-| `apps/tv-app/` | Клиент на Samsung Tizen TV (Vite + TS, D-pad навигация) | ⏳ план (Фаза 0–1) |
+| `apps/tv-app/` | Клиент на Samsung Tizen TV (Vite + TS, D-pad навигация) | ◐ каркас есть (Спринт 1.1 частично) |
 | `apps/staff-panel/` | Панель персонала (React SPA) | ⏳ план (Фаза 2–3) |
 | `apps/api/` | Backend: REST + WebSocket (NestJS) | ⏳ план (Фаза 0–2) |
 | `packages/shared-types/` | Общие TS-типы/контракты API между всеми приложениями | ⏳ план (Фаза 0) |
@@ -24,6 +24,10 @@
 | `infra/docker/` | Dockerfile + docker-compose для локальной разработки | ⏳ план (Фаза 0) |
 | `infra/db/` | Миграции и сиды PostgreSQL | ⏳ план (Фаза 0) |
 | `infra/ci/` | CI/CD пайплайны | ⏳ план (Фаза 0) |
+| `pnpm-workspace.yaml` | pnpm workspaces: `apps/*`, `packages/*` | ✅ есть |
+| `package.json` (root) | Корневой манифест монорепо + скрипты `tv:dev`, `tv:build`, `tv:preview` | ✅ есть |
+| `.gitignore` | Игнор node_modules, dist, .env, .wgt и т.п. | ✅ есть |
+| `CLAUDE.md` | Правило автообновления `NAVIGATION.md` для Claude-сессий | ✅ есть |
 
 Целевое обоснование этой структуры (монорепо на pnpm workspaces) — [`docs/02-architecture.md:57`](./docs/02-architecture.md#структура-репозитория).
 
@@ -51,20 +55,83 @@
 
 ## 3. Файловый индекс кода (`apps/`, `packages/`, `infra/`)
 
-> Пока пусто — кода ещё нет (см. `README.md` статус проекта).
-> **Как только появляется первый код, этот раздел обязателен к заполнению.**
-> Формат записи на файл (не на каждую строку — только на значимые/неочевидные блоки):
->
-> ```
-> ### apps/tv-app/src/core/focus-engine.ts
-> - Назначение: spatial navigation по геометрии для D-pad (см. docs/06-tizen.md:50)
-> - Ключевые строки:
->   - L1-20: типы Direction/FocusableElement
->   - L25-60: findNearestFocusable() — поиск ближайшего элемента по bounding box
->   - L65-80: onArrow() — обработчик keydown, точка входа
-> - Зависит от: core/router.ts (восстановление фокуса при переходе)
-> - Используется в: core/router.ts, все screens/*
-> ```
+> Формат записи на файл (не на каждую строку — только на значимые/неочевидные блоки).
+
+### apps/tv-app — Tizen TV клиент
+
+#### apps/tv-app/package.json
+- Vanilla TS + Vite (ADR-002, `docs/02-architecture.md:119`).
+- Скрипты: `dev` (Vite dev), `build` (`tsc --noEmit && vite build`), `preview`, `typecheck`.
+
+#### apps/tv-app/tsconfig.json
+- target: ES2017 (`docs/02-architecture.md` NFR + Tizen 4.0+).
+- strict + все `noUnused*` — жёсткий TS с первого дня.
+- `resolveJsonModule` — для словарей `i18n/*.json`.
+
+#### apps/tv-app/vite.config.ts
+- base: `"./"` (Tizen `.wgt` — файловый режим, не корень домена).
+- target: es2017, sourcemap: true.
+
+#### apps/tv-app/config.xml
+- Tizen-манифест приложения (`docs/06-tizen.md:17`).
+- Привилегии: `internet`, `tv.inputdevice`, `network.get`.
+- `screen-orientation="landscape"`, `required_version=4.0`.
+
+#### apps/tv-app/index.html
+- Точка входа, подключает `src/styles/main.css` и `src/main.ts`.
+- Контейнер `#app` — куда роутер рендерит экраны.
+
+#### apps/tv-app/src/main.ts
+- Загрузчик приложения (`boot()` L11):
+  - `L18`: `registerTizenKeys()` — цветные и медиа-клавиши.
+  - `L20-28`: `exitApp()` — выход через `tizen.application`.
+  - `L30-38`: создание `Router` + регистрация 7 экранов (home + 6 модулей-заглушек).
+  - `L40-67`: глобальный `keydown` — Back(10009)/Exit, OK как click(), стрелки → `findNearestFocusable`.
+  - `L70`: старт с экрана `home`.
+- `openExitModal()` L88-113 — модалка выхода на Back из home.
+
+#### apps/tv-app/src/core/keys.ts
+- `KEY` — коды клавиш пульта (Left/Right/Up/Down/OK/Back=10009/Exit/цветные), `docs/06-tizen.md:39`.
+- `keyToDirection()` — стрелки → 'left'|'right'|'up'|'down'.
+- `registerTizenKeys()` — регистрация доп. клавиш через `tizen.tvinputdevice`, безопасна в браузере.
+
+#### apps/tv-app/src/core/focus-engine.ts
+- Spatial navigation по геометрии (`docs/06-tizen.md:50`).
+- `getFocusableElements()` — все `[data-focusable="true"]`.
+- `rectOf()` + `isInDirection()` + `score()` — оценка «ближе всего в направлении».
+- `findNearestFocusable(current, dir)` — L59-80: точка входа для D-pad.
+- `focusFirst()`, `focusById()` — утилиты для роутера.
+
+#### apps/tv-app/src/core/router.ts
+- Класс `Router` с историей экранов (`stack: HistoryEntry[]`).
+- `register(id, render)` L34, `navigate(id, params)` L38, `replace()` L54, `back()` L62.
+- Восстановление фокуса при возврате: `captureFocusOnTop()` L84, `focusById(lastFocusId)`.
+- На `back()` в корне стека — вызывает `onExit` (см. exit-модалку в `main.ts`).
+
+#### apps/tv-app/src/core/i18n.ts
+- Мини-i18n: словари RU/EN из JSON, `t(key, params)` с подстановкой `{name}`.
+- `getLang()`/`setLang()`/`toggleLang()` — переключение + `localStorage`.
+- `onLangChange(cb)` — подписка для перерисовки экранов.
+
+#### apps/tv-app/src/i18n/{ru,en}.json
+- Плоские словари. Ключи `menu.*`, `screen.stub.*`, `exit.*`, `booking.*`.
+
+#### apps/tv-app/src/screens/home.ts
+- Главное меню — 6 плиток модулей + переключатель языка + приветствие с моковой бронью.
+- Плитка = `<button data-focusable="true" data-screen="…">`; клик → `navigate(screen)`.
+- Перерисовка на смену языка через `onLangChange`.
+
+#### apps/tv-app/src/screens/stub.ts
+- Универсальный экран «В разработке» — используется для 6 модулей до реализации.
+
+#### apps/tv-app/src/styles/main.css
+- Дизайн-токены (CSS-переменные) — темная тема, safe-area 5% (overscan, `docs/06-tizen.md:118`).
+- Базовый шрифт 24px, крупные плитки, фокус-рамка `outline` через `box-shadow` + масштаб (`docs/06-tizen.md:113`).
+- Классы: `.home`, `.tile`, `.stub`, `.modal-backdrop`, `.btn*`, `.lang-toggle`.
+
+#### apps/tv-app/src/data/mocks.ts
+- Моки на время отсутствия backend: `mockBooking` (гость+номер), `mockMenu` (3 блюда).
+- Уйдут при подключении реального API (Фаза 1, `docs/07-roadmap.md:61`).
 
 ---
 
@@ -72,6 +139,19 @@
 
 > Одна запись на PR/мерж в `main` или `develop`. Самые новые — сверху.
 > Что писать: дата, что изменилось, где (пути), что обновить в разделах 1–3 выше.
+
+### 2026-08-09 — каркас `apps/tv-app` (Спринт 1.1, часть)
+- Инициализирован pnpm-workspace: `pnpm-workspace.yaml`, корневой `package.json`, `.gitignore`.
+- Создан каркас TV-приложения в `apps/tv-app/`:
+  - Vite + TypeScript (target ES2017), Tizen-манифест `config.xml`.
+  - Ядро: фокус-движок (spatial navigation), роутер со стеком экранов и восстановлением фокуса, обработка клавиш пульта (D-pad, Back=10009, Exit).
+  - i18n RU/EN с `t(key, {params})` и `localStorage`-переключателем.
+  - Главное меню (6 плиток) + универсальный экран-заглушка для модулей.
+  - Модалка подтверждения выхода на Back из корня.
+  - Моки: `mockBooking`, `mockMenu` (уйдут при подключении API).
+- Сборка проверена: `pnpm --filter tv-app build` → JS 9.49 КБ / gzip 3.96 КБ (бюджет 250 КБ).
+- Ветка: `claude/repo-exploration-d5088t`.
+- Что дальше (Спринт 1.2): экран Lock (PIN), backend auth+booking, замена моков на API.
 
 ### 2026-08-09 — инициализация NAVIGATION.md
 - Добавлен этот файл (`NAVIGATION.md`) как единая точка навигации по проекту.
