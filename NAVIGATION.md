@@ -18,11 +18,11 @@
 | `docs/` | Проектная документация (архитектура, API, роадмап и т.д.) — см. раздел 2 | ✅ есть |
 | `apps/tv-app/` | Клиент на Samsung Tizen TV (Vite + TS, D-pad навигация) | ◐ Спринты 1.1+1.2 (FE) на моках |
 | `apps/staff-panel/` | Панель персонала (React SPA) | ⏳ план (Фаза 2–3) |
-| `apps/api/` | Backend: REST + WebSocket (NestJS) | ⏳ план (Фаза 0–2) |
-| `packages/shared-types/` | Общие TS-типы/контракты API между всеми приложениями | ⏳ план (Фаза 0) |
+| `apps/api/` | Backend: REST (NestJS + Postgres + Redis) | ◐ Спринт 1.2 (BE): devices, auth, booking, notify |
+| `packages/shared-types/` | Общие TS-типы/контракты API между всеми приложениями | ✅ есть (money/booking/auth/devices/errors) |
 | `packages/ui-kit/` | Общие дизайн-токены (цвета, фокус-стили) | ⏳ план (Фаза 0) |
-| `infra/docker/` | Dockerfile + docker-compose для локальной разработки | ⏳ план (Фаза 0) |
-| `infra/db/` | Миграции и сиды PostgreSQL | ⏳ план (Фаза 0) |
+| `infra/docker/` | Dockerfile + docker-compose для локальной разработки | ✅ docker-compose.dev.yml (Postgres 16 + Redis 7) |
+| `infra/db/` | Миграции и сиды PostgreSQL | ✅ живут в `apps/api/src/database/migrations` + `src/seeds` |
 | `infra/ci/` | CI/CD пайплайны | ⏳ план (Фаза 0) |
 | `pnpm-workspace.yaml` | pnpm workspaces: `apps/*`, `packages/*` | ✅ есть |
 | `package.json` (root) | Корневой манифест монорепо + скрипты `tv:dev`, `tv:build`, `tv:preview` | ✅ есть |
@@ -207,6 +207,121 @@
 - Экран подтверждения выезда: показывает итог, email из брони. На confirm вызывает `booking.checkout()`, на успех → `checkout-success`.
 - Кнопки заблокированы на время submit; ошибка отображается inline.
 
+### packages/shared-types — DTO/контракты (`docs/05-api.md`)
+
+#### packages/shared-types/src/index.ts
+- Реэкспорт всех модулей: `money`, `booking`, `auth`, `devices`, `errors`.
+
+#### packages/shared-types/src/money.ts
+- `Currency` (`RUB`|`USD`|`EUR`), `Money { amount, currency }` — деньги строкой (без float).
+
+#### packages/shared-types/src/booking.ts
+- `GuestDto`, `RoomDto`, `BookingDto`, `FolioSource` union, `FolioEntryDto`, `FolioDto`, `CheckoutRequest/Response`.
+
+#### packages/shared-types/src/auth.ts
+- `LoginRequest/Response`, `RefreshRequest/Response`, `JwtGuestPayload`.
+
+#### packages/shared-types/src/devices.ts
+- `DeviceProvisionRequest/Response`, `DeviceBindRequest/Response`.
+
+#### packages/shared-types/src/errors.ts
+- `ApiErrorBody`, `ERROR_CODES` (`AUTH_INVALID`, `DEVICE_UNKNOWN`, `BOOKING_NOT_FOUND`, …), `ErrorCode`.
+
+### apps/api — Backend (NestJS)
+
+#### apps/api/package.json
+- NestJS 10 + TypeORM 0.3 + ioredis + JWT + class-validator.
+- Скрипты: `dev`, `build`, `start`, `typecheck`, `migration:{generate,run,revert}` (через `typeorm-ts-node-commonjs`), `db:seed`.
+
+#### apps/api/tsconfig.json
+- target ES2022, `emitDecoratorMetadata`+`experimentalDecorators` для Nest/TypeORM. `strict` + `strictPropertyInitialization: false` (TypeORM-энтити).
+
+#### apps/api/.env.example
+- Все env: `API_PORT`, `API_PREFIX`, `DATABASE_URL`, `REDIS_URL`, `JWT_*`, `PROVISION_CODE`, `EMAIL_PROVIDER`, `EMAIL_FROM`.
+
+#### apps/api/nest-cli.json
+- Стандартный Nest CLI config (`sourceRoot: src`, `deleteOutDir: true`).
+
+#### apps/api/src/main.ts
+- Bootstrap: `NestFactory.create`, global prefix `/v1`, `ValidationPipe(transform+whitelist)`, `HttpExceptionFilter`.
+
+#### apps/api/src/app.module.ts
+- `ConfigModule.forRoot({ isGlobal: true, load: [loadConfig] })`.
+- `TypeOrmModule.forRoot(...)` — postgres, все сущности, migrations в `dist/database/migrations/*.js`, `synchronize: false`.
+- Импортирует `RedisModule`, `DevicesModule`, `AuthModule`, `BookingModule`, `NotifyModule`. `HealthController` подключён.
+
+#### apps/api/src/config/configuration.ts
+- `AppConfig` + `loadConfig()` — читает `process.env` с дефолтами; используется через `ConfigService.get<...>('jwt.accessSecret')` и т.д.
+
+#### apps/api/src/common/filters/http-exception.filter.ts
+- Единый формат ошибок из `docs/05-api.md`: `{ error: { code, message, details, traceId } }`.
+- `mapStatusToCode(status)` → `VALIDATION`/`AUTH_INVALID`/`FORBIDDEN`/`NOT_FOUND`/`CONFLICT`/`BUSINESS_RULE`/`INTERNAL`.
+- Логирует нехендленные ошибки с trace-ID.
+
+#### apps/api/src/common/guards/jwt-auth.guard.ts
+- `JwtAuthGuard` — читает `Authorization: Bearer …`, `jwt.verify` со `jwt.accessSecret`.
+- Пробрасывает `req.auth = { guestId, bookingId, roomId, deviceId, jti }`.
+- `AuthedRequest` — типизированный Express-request для контроллеров.
+
+#### apps/api/src/health/health.controller.ts
+- `GET /v1/health` → `{ status: 'ok', time }`.
+
+#### apps/api/src/database/data-source.ts
+- TypeORM `AppDataSource` для CLI-миграций (грузит `.env` через `dotenv`).
+
+#### apps/api/src/database/migrations/1700000000000-InitSchema.ts
+- Первая миграция: `uuid-ossp`, таблицы `rooms`, `guests`, `bookings` (unique bookingCode), `folio_entries`, `invoices`, `devices` (unique tokenHash). Индексы: `bookings(room_id, status)`, `folio_entries(booking_id, created_at)`, `devices(tokenHash)`.
+
+#### apps/api/src/seeds/seed.ts
+- Наполняет БД валидной парой: room `305`, гость «Иван Петров», бронь `ABC123` / PIN `4821` (bcrypt hash), 5 позиций фолио (те же, что в моках tv-app).
+
+#### apps/api/src/modules/redis/redis.module.ts
+- Глобальный модуль: `REDIS` symbol + `ioredis`-клиент из `redis.url`. `onModuleDestroy` — graceful `quit()`.
+
+#### apps/api/src/modules/booking/entities/{room,guest,booking,folio-entry,invoice}.entity.ts
+- TypeORM-модели по `docs/04-data-model.md`. `Booking` хранит `bookingCode` (upper) и `pinHash` (bcrypt), `includedServices` — `simple-array`. `FolioEntry.amount` — `numeric(12,2)` строкой. `Invoice` — snapshot счёта на checkout.
+
+#### apps/api/src/modules/devices/entities/device.entity.ts
+- `tokenHash` (SHA-256, unique + индекс), опциональный `room` (SET NULL при удалении комнаты), `tizenModel`, `webrtc`.
+
+#### apps/api/src/modules/devices/devices.service.ts
+- `provision()` — проверка `devices.provisionCode`, генерация `token = randomBytes(32).base64url`, хранение только `sha256(token)`; ответ содержит plain token (клиент кладёт в защищённое хранилище Tizen, ADR-003).
+- `bind(deviceId, roomNumber)` — привязка после провижининга.
+- `byToken(token)` — резолв устройства для auth (через `sha256`).
+
+#### apps/api/src/modules/devices/devices.controller.ts
+- `POST /v1/devices/provision` (201), `POST /v1/devices/bind` (200) — по `docs/05-api.md:24`.
+
+#### apps/api/src/modules/auth/auth.service.ts
+- `login(deviceToken, { bookingCode | pin })`:
+  - Резолвит устройство по `X-Device-Token`, проверяет привязку к комнате.
+  - Ищет активную бронь по `bookingCode` (upper) в этой комнате, либо по PIN (bcrypt.compare) среди активных броней комнаты.
+  - Выпускает JWT access (`jwt.accessTtl` = 900с) + refresh (`jwt.refreshTtl` = 30д), refresh-jti кладётся в Redis `hga:refresh:<bookingId>:<jti>` с TTL.
+- `refresh(refreshToken)` — verify, проверка наличия в Redis, выпуск нового access.
+- `logoutBooking(bookingId)` — `DEL hga:refresh:<bookingId>:*` — глобальная инвалидизация всех сессий брони (используется в checkout).
+
+#### apps/api/src/modules/auth/auth.controller.ts
+- `POST /v1/auth/login` (`X-Device-Token`), `POST /v1/auth/refresh`.
+
+#### apps/api/src/modules/auth/auth.module.ts
+- Импортирует `DevicesModule`, регистрирует `JwtModule` асинхронно с `accessSecret`; экспортирует `AuthService`, `JwtAuthGuard`, `JwtModule` для reuse в других модулях.
+
+#### apps/api/src/modules/booking/booking.service.ts
+- `getCurrent(bookingId)` — бронь + пересчёт total (`SUM(folio_entries.amount) WHERE currency = ...`).
+- `getFolio(bookingId)` — список позиций (order asc) + total.
+- `checkout(bookingId, email)` — транзакция: создать `invoice`, `bookings.status = 'closed'`, затем `notify.sendInvoice(...)` и `auth.logoutBooking(bookingId)`.
+
+#### apps/api/src/modules/booking/booking.controller.ts
+- Все эндпоинты под `JwtAuthGuard`. `GET /v1/booking/current`, `GET /v1/booking/folio`, `POST /v1/booking/checkout`.
+
+#### apps/api/src/modules/notify/notify.service.ts
+- Абстракция email-провайдера. Дефолт `console` — печатает в лог (для MVP/пилота).
+- Место для SMTP/SendGrid позже (когда отель выберет провайдера).
+
+#### infra/docker/docker-compose.dev.yml
+- `postgres:16-alpine` (порт 5432, том `hga-pg-data`, healthcheck), `redis:7-alpine` (порт 6379).
+- Запуск: `docker compose -f infra/docker/docker-compose.dev.yml up -d`.
+
 #### apps/tv-app/src/screens/checkout-success.ts
 - Экран успеха: галка, «счёт отправлен на …», номер invoice, кнопка «Готово» → возвращает на `lock` (сессия уже инвалидирована).
 
@@ -216,6 +331,21 @@
 
 > Одна запись на PR/мерж в `main` или `develop`. Самые новые — сверху.
 > Что писать: дата, что изменилось, где (пути), что обновить в разделах 1–3 выше.
+
+### 2026-08-09 — Спринт 1.2 (BE): apps/api (NestJS), devices/auth/booking/notify
+- Новый монорепозиторный пакет `packages/shared-types` — единые DTO/контракты API (money, booking, auth, devices, errors).
+- `infra/docker/docker-compose.dev.yml` — Postgres 16 + Redis 7 для локальной разработки.
+- Каркас `apps/api` на NestJS 10 + TypeORM 0.3 + ioredis: `main.ts` (global prefix `/v1`, ValidationPipe, exception filter), `ConfigModule` из `configuration.ts`, `RedisModule` (global), `HealthController` (`GET /health`).
+- Единый формат ошибок `docs/05-api.md`: `HttpExceptionFilter` → `{ error: { code, message, traceId } }`.
+- Первая миграция `InitSchema1700000000000`: таблицы rooms/guests/bookings/folio_entries/invoices/devices, uuid-ossp, индексы.
+- `db:seed` — валидная бронь `ABC123` / PIN `4821`, room `305`, 5 позиций фолио (совпадают с моками tv-app).
+- Модуль `devices`: `POST /devices/provision` (proof-of-hotel `provisionCode`, выпуск `deviceToken` = base64url(32), хранится только `sha256`), `POST /devices/bind` (привязка к номеру).
+- Модуль `auth`: `POST /auth/login` (`X-Device-Token` + `bookingCode | pin`), `POST /auth/refresh`. Refresh-jti в Redis (`hga:refresh:<bookingId>:<jti>`, TTL 30д). `JwtAuthGuard` для защищённых роутов.
+- Модуль `booking`: `GET /booking/current`, `GET /booking/folio`, `POST /booking/checkout` под guard — транзакция создаёт `invoice`, закрывает бронь, вызывает `notify` и `auth.logoutBooking` (инвалидация всех сессий брони).
+- Модуль `notify`: абстракция + console-провайдер (`EMAIL_PROVIDER=console`) — логирует отправку. Настоящий SMTP/SendGrid добавится, когда отель выберет провайдер.
+- Сборка: `pnpm --filter api build` — зелёная. `pnpm --filter tv-app build` — по-прежнему 36.75 KB / gzip 12.10 KB.
+- Что дальше: подключить tv-app к API (заменить mock-режим на реальные вызовы), e2e-тест login → checkout → email.
+- Ветка: `claude/repo-exploration-d5088t`.
 
 ### 2026-08-09 — Спринт 1.2 (FE): экранная клавиатура, login, бронь, счёт, checkout
 - Новые сервисы: `core/session.ts` (токены + guest), `core/format.ts` (Intl money/date), `services/auth.ts` (POST /v1/auth/login), `services/booking.ts` (GET current/folio + POST checkout).
