@@ -1,0 +1,16 @@
+{
+  "name": "@hga/shared-types",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared DTO/contracts between apps (api ↔ tv-app ↔ staff-panel)",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
