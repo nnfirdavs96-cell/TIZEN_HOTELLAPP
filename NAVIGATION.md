@@ -59,9 +59,18 @@
 
 ### apps/tv-app — Tizen TV клиент
 
+#### apps/tv-app/DEPLOY.md
+- Пошаговая инструкция установки на реальный Samsung TV (2020+, Tizen 5.5–9): Developer Mode, сертификат, Device Manager, установка через GUI или Tizen CLI, частые проблемы.
+
+#### apps/tv-app/icon.png
+- Иконка приложения 512×512 (обязательна для `.wgt`). Сгенерирована в тон приложения (здание с подсвеченными окнами).
+
+#### apps/tv-app/scripts/prepare-wgt.mjs
+- Пост-билд шаг: копирует `config.xml` + `icon.png` в `dist/`, делая папку готовой к `tizen package -t wgt`. Вызывается автоматически из `build`.
+
 #### apps/tv-app/package.json
 - Vanilla TS + Vite (ADR-002, `docs/02-architecture.md:119`).
-- Скрипты: `dev` (Vite dev), `build` (`tsc --noEmit && vite build`), `preview`, `typecheck`.
+- Скрипты: `dev`, `build` (`tsc --noEmit && vite build && prepare-wgt`), `preview`, `typecheck`.
 
 #### apps/tv-app/tsconfig.json
 - target: ES2017 (`docs/02-architecture.md` NFR + Tizen 4.0+).
@@ -74,6 +83,7 @@
 
 #### apps/tv-app/config.xml
 - Tizen-манифест приложения (`docs/06-tizen.md:17`).
+- **package=`HotelGuest`** (ровно 10 символов — требование Tizen), **id=`HotelGuest.tvapp`**.
 - Привилегии: `internet`, `tv.inputdevice`, `network.get`.
 - `screen-orientation="landscape"`, `required_version=4.0`.
 
@@ -331,6 +341,13 @@
 
 > Одна запись на PR/мерж в `main` или `develop`. Самые новые — сверху.
 > Что писать: дата, что изменилось, где (пути), что обновить в разделах 1–3 выше.
+
+### 2026-08-20 — подготовка к установке на реальный Samsung TV
+- `apps/tv-app/DEPLOY.md` — пошаговая инструкция установки на настоящий ТВ (2020+, Tizen 5.5–9): Developer Mode, Samsung-сертификат, Device Manager, установка через Tizen Studio GUI или CLI, раздел «частые проблемы».
+- `apps/tv-app/icon.png` — иконка приложения 512×512 (обязательна для `.wgt`), сгенерирована в тон приложения.
+- `apps/tv-app/scripts/prepare-wgt.mjs` — пост-билд шаг: копирует `config.xml`+`icon.png` в `dist/` → папка готова к `tizen package`. Подключён в `build`.
+- `config.xml`: исправлен `package` на `HotelGuest` (было `hotellapp` — 9 символов, Tizen требует ровно 10; установка на устройство падала бы на валидации), `id=HotelGuest.tvapp`.
+- Ветка: `claude/repo-exploration-d5088t`.
 
 ### 2026-08-09 — Спринт 1.2 (BE): apps/api (NestJS), devices/auth/booking/notify
 - Новый монорепозиторный пакет `packages/shared-types` — единые DTO/контракты API (money, booking, auth, devices, errors).
