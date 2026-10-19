@@ -21,7 +21,7 @@
 | `apps/api/` | Backend: REST (NestJS + Postgres + Redis) | ◐ Спринт 1.2 (BE): devices, auth, booking, notify |
 | `packages/shared-types/` | Общие TS-типы/контракты API между всеми приложениями | ✅ есть (money/booking/auth/devices/errors) |
 | `packages/ui-kit/` | Общие дизайн-токены (цвета, фокус-стили) | ⏳ план (Фаза 0) |
-| `infra/docker/` | Dockerfile + docker-compose для локальной разработки | ✅ docker-compose.dev.yml (Postgres 16 + Redis 7) |
+| `infra/docker/` | Dockerfile + docker-compose для локальной разработки | ✅ dev (Postgres+Redis) + full-stack (api+web+nginx) |
 | `infra/db/` | Миграции и сиды PostgreSQL | ✅ живут в `apps/api/src/database/migrations` + `src/seeds` |
 | `infra/ci/` | CI/CD пайплайны | ⏳ план (Фаза 0) |
 | `pnpm-workspace.yaml` | pnpm workspaces: `apps/*`, `packages/*` | ✅ есть |
@@ -91,10 +91,38 @@
 - Точка входа, подключает `src/styles/main.css` и `src/main.ts`.
 - Контейнер `#app` — куда роутер рендерит экраны.
 
+#### infra/docker/docker-compose.dev.yml
+- `postgres:16-alpine` (порт 5432, том `hga-pg-data`, healthcheck), `redis:7-alpine` (порт 6379).
+- Только БД для локальной разработки. Запуск: `docker compose -f infra/docker/docker-compose.dev.yml up -d`.
+
+#### infra/docker/docker-compose.yml — полный стек (домашний сервер)
+- 4 сервиса: `postgres`, `redis`, `api` (сборка из `api.Dockerfile`, порт 3000), `web` (nginx из `web.Dockerfile`, порт 8080).
+- `api` ждёт healthy postgres+redis; env задаёт DATABASE_URL/REDIS_URL на имена сервисов. Секреты JWT/PROVISION_CODE из окружения с дефолтами.
+- `web` build-arg `VITE_USE_MOCKS` (Этап 1 = true, Этап 2 = false). Запуск: `docker compose -f infra/docker/docker-compose.yml up -d --build`.
+
+#### infra/docker/api.Dockerfile
+- `node:22-slim` + pnpm. Ставит зависимости по манифестам (кэш-слой), собирает `api`. `shared-types` импортируется type-only → в рантайме `.ts` не нужны.
+- ENTRYPOINT → `entrypoint-api.sh`.
+
+#### infra/docker/entrypoint-api.sh
+- При старте: `migration:run` (с одним ретраем), `db:seed` (идемпотентно), затем `node apps/api/dist/main.js`.
+
+#### infra/docker/web.Dockerfile
+- Multi-stage: build (vite build tv-app с `VITE_USE_MOCKS`) → nginx:alpine, копирует `dist` в `/usr/share/nginx/html` + конфиг.
+
+#### infra/nginx/default.conf
+- listen 8080, SPA-fallback на `index.html`, проксирование `/v1/` → `http://api:3000/v1/` (same-origin API + задел под WebSocket).
+
+#### infra/deploy.sh
+- На сервере: `git pull` + `docker compose up -d --build` + статус. `VITE_USE_MOCKS=false ./infra/deploy.sh` — сборка под реальный API.
+
+#### infra/SERVER-SETUP.md
+- Инструкция под домашний Debian: установка Docker, фиксация локального IP (DHCP-резервация), запуск стека, порты (8080 web / 3000 api), цикл обновления, переключение mock→real, частые проблемы.
+
 #### apps/tv-app/src/main.ts
 - Загрузчик приложения (`boot()`):
   - Инициализация `Session` + `ApiClient` + `AuthService` + `BookingService` + `MutationQueue` + `NetworkMonitor`.
-  - `USE_MOCKS = !VITE_API_BASE` — весь mock-режим переключается одной переменной.
+  - `USE_MOCKS = VITE_USE_MOCKS !== "false"` (по умолчанию ON); `API_BASE` = `VITE_API_BASE` или `window.location.origin` (same-origin для серверной сборки).
   - Регистрация экранов: `lock`, `login`, `home`, `booking`, `bill`, `checkout`, `checkout-success`, 5 модулей-заглушек, `offline`.
   - `session.subscribe`: авто-редирект на `lock` при потере сессии (кроме экранов lock/login/checkout-success).
   - `enter()` — маршрутизация из lock: если authed → `home`, иначе → `login`.
@@ -284,6 +312,7 @@
 
 #### apps/api/src/seeds/seed.ts
 - Наполняет БД валидной парой: room `305`, гость «Иван Петров», бронь `ABC123` / PIN `4821` (bcrypt hash), 5 позиций фолио (те же, что в моках tv-app).
+- Идемпотентно: при повторном запуске (рестарт контейнера) пропускает, если бронь `ABC123` уже есть.
 
 #### apps/api/src/modules/redis/redis.module.ts
 - Глобальный модуль: `REDIS` symbol + `ioredis`-клиент из `redis.url`. `onModuleDestroy` — graceful `quit()`.
@@ -341,6 +370,20 @@
 
 > Одна запись на PR/мерж в `main` или `develop`. Самые новые — сверху.
 > Что писать: дата, что изменилось, где (пути), что обновить в разделах 1–3 выше.
+
+### 2026-10-19 — серверный стек (Этап 1): full-stack docker для домашнего Debian
+- `infra/docker/docker-compose.yml` — полный стек: Postgres + Redis + API (NestJS) + web (nginx со статикой tv-app). Запуск одной командой.
+- `infra/docker/api.Dockerfile` + `entrypoint-api.sh` — сборка API, при старте migrate + seed (идемпотентно) + запуск.
+- `infra/docker/web.Dockerfile` + `infra/nginx/default.conf` — сборка tv-app и раздача через nginx (:8080), проксирование `/v1` → api (:3000).
+- `infra/deploy.sh` — обновление на сервере (git pull + пересборка).
+- `infra/SERVER-SETUP.md` — инструкция под Debian (Docker, фиксация IP, запуск, цикл обновления без переустановки .wgt).
+- `.dockerignore` — исключает node_modules/dist/.git из контекста сборки.
+- `apps/tv-app/src/main.ts`: режим моков вынесен в отдельный флаг `VITE_USE_MOCKS` (по умолчанию ON); `API_BASE` по умолчанию = same-origin → задел под Этап 2 (реальный API через nginx-прокси).
+- `apps/api/src/seeds/seed.ts`: сделан идемпотентным (не дублирует при рестарте контейнера).
+- Сборки зелёные: tv-app 36.81 KB / gzip 12.13 KB; api build + typecheck ок.
+- Цель Этапа 1: поставить оболочку на ТВ один раз → дальше обновлять код через сервер без переустановки `.wgt`.
+- Этап 2 (дальше): перевести `config.xml` на URL сервера (оболочка) + провижининг устройства + `VITE_USE_MOCKS=false`.
+- Ветка: `claude/repo-exploration-d5088t`.
 
 ### 2026-08-20 — подготовка к установке на реальный Samsung TV
 - `apps/tv-app/DEPLOY.md` — пошаговая инструкция установки на настоящий ТВ (2020+, Tizen 5.5–9): Developer Mode, Samsung-сертификат, Device Manager, установка через Tizen Studio GUI или CLI, раздел «частые проблемы».
