@@ -19,9 +19,15 @@ import { renderCheckout } from "./screens/checkout";
 import { renderCheckoutSuccess } from "./screens/checkout-success";
 
 const APP_ROOT_ID = "app";
-const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "";
+// Режим моков управляется отдельным флагом (по умолчанию ON — чтобы dev-браузер
+// и Этап-1 сборка работали по демо-кредам без backend).
+// Этап 2: VITE_USE_MOCKS=false → реальный API.
+const USE_MOCKS = ((import.meta.env.VITE_USE_MOCKS as string | undefined) ?? "true") !== "false";
+// API по умолчанию — same-origin (nginx проксирует /v1 → api). Можно переопределить VITE_API_BASE.
+const API_BASE =
+  (import.meta.env.VITE_API_BASE as string | undefined) ||
+  (typeof window !== "undefined" ? window.location.origin : "");
 const HEALTH_URL = (import.meta.env.VITE_HEALTH_URL as string | undefined) ?? "";
-const USE_MOCKS = !API_BASE;
 
 function boot(): void {
   const root = document.getElementById(APP_ROOT_ID);

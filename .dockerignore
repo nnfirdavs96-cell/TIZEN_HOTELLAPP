@@ -1,0 +1,16 @@
+node_modules
+**/node_modules
+dist
+**/dist
+.git
+.gitignore
+*.log
+.pnpm-store
+**/.pnpm-store
+.env
+**/.env
+*.wgt
+.vite
+**/.vite
+*.md
+!apps/api/.env.example

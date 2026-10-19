@@ -1,0 +1,74 @@
+# Полный стек для домашнего сервера: Postgres + Redis + API + веб (nginx).
+# Запуск:  docker compose -f infra/docker/docker-compose.yml up -d --build
+# Контекст сборки — корень репозитория (../..).
+
+name: hga
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hga
+      POSTGRES_PASSWORD: hga
+      POSTGRES_DB: hga
+    volumes:
+      - hga-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hga"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - hga-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/api.Dockerfile
+    environment:
+      API_PORT: 3000
+      API_PREFIX: v1
+      DATABASE_URL: postgres://hga:hga@postgres:5432/hga
+      REDIS_URL: redis://redis:6379
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change-me-access}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-me-refresh}
+      JWT_ACCESS_TTL: 900
+      JWT_REFRESH_TTL: 2592000
+      PROVISION_CODE: ${PROVISION_CODE:-HOTEL-SETUP-CODE}
+      EMAIL_PROVIDER: console
+      EMAIL_FROM: noreply@hotel.local
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infra/docker/web.Dockerfile
+      args:
+        # Этап 1: true (mock-режим, демо-креды). Этап 2: false (реальный API).
+        VITE_USE_MOCKS: ${VITE_USE_MOCKS:-true}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  hga-pg-data:
+  hga-redis-data:

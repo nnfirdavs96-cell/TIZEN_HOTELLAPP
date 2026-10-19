@@ -13,6 +13,15 @@ async function main(): Promise<void> {
   const bookings = AppDataSource.getRepository(Booking);
   const folio = AppDataSource.getRepository(FolioEntry);
 
+  // Идемпотентность: при повторном запуске (рестарт контейнера) не дублируем.
+  const already = await bookings.findOne({ where: { bookingCode: "ABC123" } });
+  if (already) {
+    // eslint-disable-next-line no-console
+    console.log("Seed пропущен — бронь ABC123 уже существует");
+    await AppDataSource.destroy();
+    return;
+  }
+
   const room = rooms.create({ number: "305", category: "standard", language: "ru" });
   await rooms.save(room);
 
